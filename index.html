@@ -58,7 +58,7 @@ td select{padding:3px 6px;font-size:12px}
 <p>Cadastre responsáveis para selecionar nas ações. Para dar acesso individual, envie ao fiscal o endereço deste dashboard: ele deverá clicar em “Criar acesso” e definir a própria senha.</p>
 <div class="filters"><input id="fiscalNome" placeholder="Nome completo do fiscal" maxlength="120"><input id="fiscalEmail" type="email" placeholder="E-mail (opcional)" maxlength="254"><input id="fiscalDisc" placeholder="Disciplina (opcional)" maxlength="100"><input id="fiscalEmpresa" placeholder="Empresa (opcional)" maxlength="100"><button class="btn-add" id="fiscalSave">Adicionar fiscal</button><button class="btn-add" id="fiscalRefresh" style="background:var(--pl)">Atualizar fiscais</button></div>
 <p id="fiscalInfo" role="status"></p><div class="tw"><table style="min-width:600px"><thead><tr><th>Nome</th><th>E-mail</th><th>Disciplina</th><th>Empresa</th><th>Situação</th></tr></thead><tbody id="fiscalRows"></tbody></table></div>
-</div><div class="kpis" id="kpis"></div>
+</div><div class="card" id="adminCancelPanel" style="display:none;margin-bottom:14px"><h3>Administração · Cancelamento de atividades</h3><p>Somente o administrador pode cancelar. O registro é preservado com justificativa, data e responsável.</p><div class="filters"><select id="cancelAction" style="flex:2;min-width:260px"><option value="">Selecione uma atividade ativa</option></select><input id="cancelReason" placeholder="Justificativa obrigatória (mínimo 10 caracteres)" maxlength="1000" style="flex:3"><button class="btn-add" id="cancelSubmit" style="background:#9f3131">Cancelar atividade</button></div><p id="cancelInfo" role="status"></p></div><div class="kpis" id="kpis"></div>
 <div class="card" style="margin-bottom:14px"><h3>Resumo gerencial · ações filtradas</h3><div id="executiveSummary" style="line-height:1.8"></div></div>
 <div class="grid">
 <div class="card"><h3>Status</h3><div class="donut"><svg id="donut" width="130" height="130" viewBox="0 0 42 42"></svg><div class="leg" id="leg"></div></div></div>
@@ -110,21 +110,22 @@ const SB_URL="https://zlwycfpjxxbyhpogsogk.supabase.co";
 const SB_KEY="sb_publishable_CsIEBatOuMT63Jo0qMq3-w_3nN02jb2";
 let accessToken="";
 let refreshToken="";
+let isAdmin=false;
 const columns={d:"disciplina",a:"atividade",r:"responsavel",i:"inicio",t:"termino",s:"status",c:"descricao_acao",o:"observacoes"};
 const normalizeName=x=>x.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
 function detectColumns(record){const candidates={d:['disciplina'],a:['atividade'],r:['responsavel'],i:['inicio','datadenecessidade'],t:['termino','terminoreal'],s:['status'],c:['descricaodeacao','acao'],o:['observacoes']};for(const [k,possibilities] of Object.entries(candidates)){const found=Object.keys(record).find(x=>possibilities.includes(normalizeName(x)));if(found)columns[k]=found;}}
 const apiHeaders=()=>({"apikey":SB_KEY,"Authorization":"Bearer "+accessToken,"Content-Type":"application/json"});
 async function sbFetch(path,options={}){const r=await fetch(SB_URL+path,{...options,headers:{...apiHeaders(),...(options.headers||{})}});if(!r.ok){let msg=await r.text();throw Error("Supabase "+r.status+": "+msg.slice(0,500))}const body=await r.text();if(!body.trim())return null;try{return JSON.parse(body)}catch(e){throw Error('Resposta inesperada do Supabase (HTTP '+r.status+'): '+body.slice(0,250))}}
-const fromDB=x=>({id:x.id,...Object.fromEntries(Object.entries(columns).map(([k,v])=>[k,x[v]??""]))});
+const fromDB=x=>({cancelado:!!x.cancelado,justificativa_cancelamento:x.justificativa_cancelamento||"",cancelado_em:x.cancelado_em||"",cancelado_por:x.cancelado_por||"",id:x.id,...Object.fromEntries(Object.entries(columns).map(([k,v])=>[k,x[v]??""]))});
 const toDB=x=>Object.fromEntries(Object.entries(columns).map(([k,v])=>[v,x[k]]));
 function save(){} // dados persistidos diretamente no Supabase
 function delRow(ix){alert("Exclusão desabilitada: ainda não configuramos uma política segura para excluir ações.")}
 async function reload(){try{const records=await sbFetch('/rest/v1/acoes?select=*&order=id.asc');if(records.length)detectColumns(records[0]);D.splice(0,D.length,...records.map(fromDB));sel("fd","d","Disciplina",uniq("d"));sel("fr","r","Responsável",uniq("r"));sel("fa","a","Ação",uniq("c").filter(Boolean));draw();setInfo("Sincronizado: "+D.length+" ações",false)}catch(e){setInfo("Erro ao carregar ações: "+e.message,true)}}
 function setInfo(message,error){const e=document.getElementById("syncInfo");e.textContent=message;e.style.color=error?"#b91c1c":"#087f5b"}
-async function login(){const email=document.getElementById("sbEmail").value.trim(),password=document.getElementById("sbPassword").value;if(!email||!password)return setInfo("Informe e-mail e senha.",true);try{const r=await fetch(SB_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:SB_KEY,'Content-Type':'application/json'},body:JSON.stringify({email,password})});const result=await r.json();if(!r.ok){const detail=result.msg||result.error_description||result.message||'Falha no login';if(r.status===400&&/invalid login credentials/i.test(detail))throw Error("E-mail ou senha não reconhecidos. Confira o cadastro em Supabase → Authentication → Users e redefina a senha se necessário.");if(/email not confirmed/i.test(detail))throw Error("E-mail ainda não confirmado no Supabase. Confirme o usuário em Authentication → Users.");throw Error(detail);}accessToken=result.access_token;refreshToken=result.refresh_token;document.getElementById('sbPassword').value='';document.getElementById('loginPanel').style.display='none';document.getElementById('dashboardContent').style.display='block';await reload();await loadFiscais();}catch(e){setInfo("Falha no login: "+e.message,true)}}
-function logout(){accessToken='';refreshToken='';D.length=0;fiscais=[];document.getElementById('loginPanel').style.display='block';document.getElementById('dashboardContent').style.display='none';setInfo('Sessão encerrada.',false)}
+async function login(){const email=document.getElementById("sbEmail").value.trim(),password=document.getElementById("sbPassword").value;if(!email||!password)return setInfo("Informe e-mail e senha.",true);try{const r=await fetch(SB_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:SB_KEY,'Content-Type':'application/json'},body:JSON.stringify({email,password})});const result=await r.json();if(!r.ok){const detail=result.msg||result.error_description||result.message||'Falha no login';if(r.status===400&&/invalid login credentials/i.test(detail))throw Error("E-mail ou senha não reconhecidos. Confira o cadastro em Supabase → Authentication → Users e redefina a senha se necessário.");if(/email not confirmed/i.test(detail))throw Error("E-mail ainda não confirmado no Supabase. Confirme o usuário em Authentication → Users.");throw Error(detail);}accessToken=result.access_token;refreshToken=result.refresh_token;document.getElementById('sbPassword').value='';document.getElementById('loginPanel').style.display='none';document.getElementById('dashboardContent').style.display='block';await reload();await loadFiscais();await checkAdmin();}catch(e){setInfo("Falha no login: "+e.message,true)}}
+function logout(){isAdmin=false;$("adminCancelPanel").style.display="none";accessToken='';refreshToken='';D.length=0;fiscais=[];document.getElementById('loginPanel').style.display='block';document.getElementById('dashboardContent').style.display='none';setInfo('Sessão encerrada.',false)}
 async function insertRecord(record){await sbFetch('/rest/v1/acoes',{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify(toDB(record))});await reload()}
-async function updateRecord(ix,record){const id=D[ix].id;await sbFetch('/rest/v1/acoes?id=eq.'+encodeURIComponent(id),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify(toDB(record))});await reload()}
+async function updateRecord(ix,record){if(D[ix].cancelado)throw Error("Ação cancelada: edição bloqueada.");const id=D[ix].id;await sbFetch('/rest/v1/acoes?id=eq.'+encodeURIComponent(id),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify(toDB(record))});await reload()}
 
 function exportCSV(){
 const head=["Disciplina","Atividade","Responsável","Data de Necessidade","Término Real","Status","Descrição de ação","Observações"];
@@ -135,6 +136,7 @@ const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=u
 }
 let editIx=-1;
 function openModal(ix){
+if(ix>=0&&D[ix].cancelado){alert("Ação cancelada. Justificativa: "+D[ix].justificativa_cancelamento);return;}
 editIx=ix;
 const m=ix>=0?D[ix]:{d:"",a:"",r:"",i:"",t:"",s:"Previsto",c:"",o:""};
 $("modalTitle").textContent=ix>=0?"Editar ação":"Nova ação";
@@ -200,8 +202,8 @@ async function registerUser(){
 }
 const $=id=>document.getElementById(id);
 const pd=s=>{const m=s.match(/(\d+)\/(\d+)\/(\d+)/);return m?new Date(+m[3],m[2]-1,+m[1]):null};
-const late=x=>{const d=pd(x.i);return x.s!=="Concluído"&&d&&d<H};
-const sem=x=>{const d=pd(x.i);return x.s!=="Concluído"&&d&&d>=H&&(d-H)/864e5<=7};
+const late=x=>{const d=pd(x.i);return !x.cancelado&&x.s!=="Concluído"&&d&&d<H};
+const sem=x=>{const d=pd(x.i);return !x.cancelado&&x.s!=="Concluído"&&d&&d>=H&&(d-H)/864e5<=7};
 const uniq=k=>[...new Set(D.map(x=>x[k]))].sort();
 const F={d:"",r:"",s:"",a:"",q:""};
 $("hoje").textContent=H.toLocaleDateString("pt-BR");
@@ -211,24 +213,44 @@ sel("fa","a","Ação",uniq("c").filter(Boolean));
 $("q").oninput=e=>{F.q=e.target.value.toLowerCase();draw()};
 const match=x=>(!F.d||x.d===F.d)&&(!F.r||x.r===F.r)&&(!F.s||x.s===F.s)&&(!F.a||x.c===F.a)&&(!F.q||(x.a+x.c+x.o+x.r).toLowerCase().includes(F.q));
 function setF(k,v,id){F[k]=F[k]===v?"":v;$(id).value=F[k];draw()}
-async function changeStatus(ix,status){const x={...D[ix],s:status};if(status==='Concluído'&&!x.t)x.t=H.toLocaleDateString('pt-BR');try{await updateRecord(ix,x)}catch(e){alert('Erro ao atualizar status: '+e.message);await reload()}}
+async function changeStatus(ix,status){if(D[ix].cancelado){alert("Ação cancelada: edição bloqueada.");draw();return;}const x={...D[ix],s:status};if(status==='Concluído'&&!x.t)x.t=H.toLocaleDateString('pt-BR');try{await updateRecord(ix,x)}catch(e){alert('Erro ao atualizar status: '+e.message);await reload()}}
 function draw(){
 const L=D.filter(match),n=L.length,c=s=>L.filter(x=>x.s===s).length;
-const pct=n?Math.round(c("Concluído")/n*100):0;
-$("kpis").innerHTML=[["Total de ações",n],["Previsto",c("Previsto")],["Em andamento",c("Em andamento")],["Concluído",c("Concluído")],["% concluído",pct+"%"],["Atrasadas (necessidade vencida)",L.filter(late).length],["Necessidade em 7 dias",L.filter(sem).length]]
+const ativos=L.filter(x=>!x.cancelado),nc=ativos.length,cn=s=>ativos.filter(x=>x.s===s).length;
+const pct=nc?Math.round(cn("Concluído")/nc*100):0;
+$("kpis").innerHTML=[["Total de ações",n],["Ativas",nc],["Canceladas",L.filter(x=>x.cancelado).length],["Previsto",cn("Previsto")],["Em andamento",cn("Em andamento")],["Concluído",cn("Concluído")],["% concluído",pct+"%"],["Atrasadas (necessidade vencida)",L.filter(late).length],["Necessidade em 7 dias",L.filter(sem).length]]
 .map(k=>`<div class="card kpi"><b>${k[1]}</b><span>${k[0]}</span></div>`).join("");
-const atrasadas=L.filter(late), proximas=L.filter(sem), emAndamento=c("Em andamento");
-$("executiveSummary").innerHTML=`<strong>${n} ações no recorte atual.</strong> Conclusão: <strong>${pct}%</strong> (${c("Concluído")} concluídas). <strong>${atrasadas.length}</strong> ações com necessidade vencida e <strong>${proximas.length}</strong> com necessidade nos próximos 7 dias. Em andamento: <strong>${emAndamento}</strong>. ${atrasadas.length?"Prioridade: tratar as ações vencidas e revisar seus responsáveis e prazos.":"Nenhuma necessidade vencida no recorte selecionado."}`;
+const atrasadas=L.filter(late), proximas=L.filter(sem), emAndamento=cn("Em andamento");
+$("executiveSummary").innerHTML=`<strong>${n} ações no recorte atual.</strong> Conclusão: <strong>${pct}%</strong> (${cn("Concluído")} concluídas). <strong>${atrasadas.length}</strong> ações com necessidade vencida e <strong>${proximas.length}</strong> com necessidade nos próximos 7 dias. Em andamento: <strong>${emAndamento}</strong>. Canceladas: <strong>${L.filter(x=>x.cancelado).length}</strong>. ${atrasadas.length?"Prioridade: tratar as ações vencidas e revisar seus responsáveis e prazos.":"Nenhuma necessidade vencida no recorte selecionado."}`;
+const selectedCancel=$("cancelAction").value;
+$("cancelAction").innerHTML='<option value="">Selecione uma atividade ativa</option>'+D.filter(x=>!x.cancelado).map(x=>`<option value="${escapeHTML(x.id)}">#${escapeHTML(x.id)} — ${escapeHTML(x.a)}</option>`).join("");
+if(D.some(x=>String(x.id)===selectedCancel&&!x.cancelado))$("cancelAction").value=selectedCancel;
 const currentPhoto=$("photoAction").value;
 $("photoAction").innerHTML='<option value="">Selecione uma ação</option>'+D.map(x=>`<option value="${escapeHTML(x.id)}">#${escapeHTML(x.id)} — ${escapeHTML(x.a)}</option>`).join("");
 if(D.some(x=>String(x.id)===currentPhoto))$("photoAction").value=currentPhoto;
-let off=0;$("donut").innerHTML=`<circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--bd)" stroke-width="6"/>`+ST.map(s=>{const p=n?c(s)/n*100:0;const e=`<circle cx="21" cy="21" r="15.9" fill="none" stroke="${COL[s]}" stroke-width="6" stroke-dasharray="${p} ${100-p}" stroke-dashoffset="${25-off}" style="cursor:pointer" onclick="setF('s','${s}','fs')"/>`;off+=p;return e}).join("");
-$("leg").innerHTML=ST.map(s=>`<div><span class="dot" style="background:${COL[s]}"></span>${s}: <b>${c(s)}</b></div>`).join("");
-const bars=(id,k,fk,fid)=>{const base=D.filter(x=>match({...x,[k]:F[fk]||x[k]}));const keys=uniq(k);const mx=Math.max(1,...keys.map(v=>base.filter(x=>x[k]===v).length));
+let off=0;$("donut").innerHTML=`<circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--bd)" stroke-width="6"/>`+ST.map(s=>{const p=nc?cn(s)/nc*100:0;const e=`<circle cx="21" cy="21" r="15.9" fill="none" stroke="${COL[s]}" stroke-width="6" stroke-dasharray="${p} ${100-p}" stroke-dashoffset="${25-off}" style="cursor:pointer" onclick="setF('s','${s}','fs')"/>`;off+=p;return e}).join("");
+$("leg").innerHTML=ST.map(s=>`<div><span class="dot" style="background:${COL[s]}"></span>${s}: <b>${cn(s)}</b></div>`).join("");
+const bars=(id,k,fk,fid)=>{const base=D.filter(x=>!x.cancelado&&match({...x,[k]:F[fk]||x[k]}));const keys=[...new Set(D.filter(x=>!x.cancelado).map(x=>x[k]))].sort();const mx=Math.max(1,...keys.map(v=>base.filter(x=>x[k]===v).length));
 $(id).innerHTML=keys.map(v=>{const g=base.filter(x=>x[k]===v);return `<div class="row" onclick="setF('${fk}','${v}','${fid}')" style="${F[fk]&&F[fk]!==v?'opacity:.4':''}"><span class="n" title="${v}">${v}</span><div class="bar" style="width:${g.length/mx*100}%;flex:none;min-width:8px;max-width:calc(100% - 140px)">${ST.map(s=>`<i style="background:${COL[s]};flex:${g.filter(x=>x.s===s).length}"></i>`).join("")}</div><span class="v">${g.length}</span></div>`}).join("")};
 bars("disc","d","d","fd");bars("resp","r","r","fr");
-$("tb").innerHTML=L.map(x=>{const ix=D.indexOf(x);return `<tr><td onclick="openModal(${ix})" style="cursor:pointer">${x.d}</td><td onclick="openModal(${ix})" style="cursor:pointer">${x.a}</td><td onclick="openModal(${ix})" style="cursor:pointer">${x.r}</td><td class="${late(x)?'late':''}" onclick="openModal(${ix})" style="cursor:pointer">${x.i}</td><td onclick="openModal(${ix})" style="cursor:pointer">${x.t}</td><td><select onchange="changeStatus(${ix},this.value)" style="border-color:${COL[x.s]};color:${COL[x.s]}">${ST.map(s=>`<option ${s===x.s?'selected':''}>${s}</option>`).join("")}</select></td><td onclick="openModal(${ix})" style="cursor:pointer">${x.c}</td><td onclick="openModal(${ix})" style="cursor:pointer">${x.o}</td><td><button class="row-del" onclick="delRow(${ix})" title="Excluir">✕</button></td></tr>`}).join("")||`<tr><td colspan="9">Nenhuma ação encontrada.</td></tr>`;
+$("tb").innerHTML=L.map(x=>{const ix=D.indexOf(x);return `<tr><td onclick="openModal(${ix})" style="cursor:pointer">${x.d}</td><td onclick="openModal(${ix})" style="cursor:pointer">${x.a}</td><td onclick="openModal(${ix})" style="cursor:pointer">${x.r}</td><td class="${late(x)?'late':''}" onclick="openModal(${ix})" style="cursor:pointer">${x.i}</td><td onclick="openModal(${ix})" style="cursor:pointer">${x.t}</td><td>${x.cancelado?`<span class="tag" style="background:#9f3131" title="${escapeHTML(x.justificativa_cancelamento)}">Cancelada</span>`:`<select onchange="changeStatus(${ix},this.value)" style="border-color:${COL[x.s]};color:${COL[x.s]}">${ST.map(s=>`<option ${s===x.s?'selected':''}>${s}</option>`).join("")}</select>`}</td><td onclick="openModal(${ix})" style="cursor:pointer">${x.c}</td><td onclick="openModal(${ix})" style="cursor:pointer">${escapeHTML(x.o)}${x.cancelado?`<p style="color:#9f3131"><strong>Cancelada:</strong> ${escapeHTML(x.justificativa_cancelamento)}<br>${escapeHTML(x.cancelado_em)} · ${escapeHTML(x.cancelado_por)}</p>`:""}</td><td><button class="row-del" onclick="delRow(${ix})" title="Excluir">✕</button></td></tr>`}).join("")||`<tr><td colspan="9">Nenhuma ação encontrada.</td></tr>`;
 }
+async function checkAdmin(){
+ try{const data=await sbFetch("/rest/v1/rpc/ero_eh_admin",{method:"POST",body:"{}"});isAdmin=data===true;$("adminCancelPanel").style.display=isAdmin?"block":"none"}
+ catch(e){isAdmin=false;$("adminCancelPanel").style.display="none";setInfo("Permissões administrativas indisponíveis: "+e.message,true)}
+}
+async function cancelActivity(){
+ if(!isAdmin)return;
+ const id=$("cancelAction").value,reason=$("cancelReason").value.trim();
+ if(!id){$("cancelInfo").textContent="Selecione uma atividade.";return}
+ if(reason.length<10){$("cancelInfo").textContent="Informe uma justificativa de pelo menos 10 caracteres.";return}
+ const action=D.find(x=>String(x.id)===id);if(!action)return;
+ if(!confirm("Confirmar CANCELAMENTO da atividade #"+id+" — "+action.a+"? A operação será registrada no histórico."))return;
+ try{$("cancelSubmit").disabled=true;await sbFetch("/rest/v1/rpc/ero_cancelar_acao",{method:"POST",body:JSON.stringify({p_acao_id:Number(id),p_justificativa:reason})});$("cancelReason").value="";$("cancelInfo").textContent="Atividade cancelada e registrada.";await reload()}
+ catch(e){$("cancelInfo").textContent="Falha no cancelamento: "+e.message}
+ finally{$("cancelSubmit").disabled=false}
+}
+$("cancelSubmit").onclick=cancelActivity;
 $("sbShowSignup").onclick=()=>{$("loginPanel").style.display="none";$("signupPanel").style.display="block"};
 $("regBack").onclick=()=>{$("signupPanel").style.display="none";$("loginPanel").style.display="block"};
 $("regSubmit").onclick=registerUser;
