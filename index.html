@@ -59,6 +59,7 @@ td select{padding:3px 6px;font-size:12px}
 <div class="filters"><input id="fiscalNome" placeholder="Nome completo do fiscal" maxlength="120"><input id="fiscalEmail" type="email" placeholder="E-mail (opcional)" maxlength="254"><input id="fiscalDisc" placeholder="Disciplina (opcional)" maxlength="100"><input id="fiscalEmpresa" placeholder="Empresa (opcional)" maxlength="100"><button class="btn-add" id="fiscalSave">Adicionar fiscal</button><button class="btn-add" id="fiscalRefresh" style="background:var(--pl)">Atualizar fiscais</button></div>
 <p id="fiscalInfo" role="status"></p><div class="tw"><table style="min-width:600px"><thead><tr><th>Nome</th><th>E-mail</th><th>Disciplina</th><th>Empresa</th><th>Situação</th></tr></thead><tbody id="fiscalRows"></tbody></table></div>
 </div><div class="kpis" id="kpis"></div>
+<div class="card" style="margin-bottom:14px"><h3>Resumo gerencial · ações filtradas</h3><div id="executiveSummary" style="line-height:1.8"></div></div>
 <div class="grid">
 <div class="card"><h3>Status</h3><div class="donut"><svg id="donut" width="130" height="130" viewBox="0 0 42 42"></svg><div class="leg" id="leg"></div></div></div>
 <div class="card"><h3>Por disciplina</h3><div id="disc"></div></div>
@@ -74,6 +75,12 @@ td select{padding:3px 6px;font-size:12px}
 </div>
 <div class="tw"><table><thead><tr><th>Disciplina</th><th>Atividade</th><th>Responsável</th><th>Data de Necessidade</th><th>Término Real</th><th>Status</th><th>Ação</th><th>Observações</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
 </div>
+</div>
+<div class="card" id="photoPanel" style="margin:14px 0">
+<h3>Registro fotográfico das ações</h3>
+<p>Selecione uma ação cadastrada, escolha uma imagem (JPG, PNG ou WebP, até 5 MB) e registre a evidência. As fotos são privadas para usuários autenticados.</p>
+<div class="filters"><select id="photoAction" style="max-width:100%;flex:1"><option value="">Selecione uma ação</option></select><input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp" aria-label="Fotografia da ação"><input id="photoDesc" maxlength="250" placeholder="Descrição da evidência"><button class="btn-add" id="photoUpload">Enviar foto</button><button class="btn-add" id="photoRefresh" style="background:var(--pl)">Ver registros</button></div>
+<p id="photoInfo" role="status"></p><div id="photoGallery" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px"></div>
 </div>
 <div class="modal-bg" id="modalBg">
 <div class="modal">
@@ -210,6 +217,11 @@ const L=D.filter(match),n=L.length,c=s=>L.filter(x=>x.s===s).length;
 const pct=n?Math.round(c("Concluído")/n*100):0;
 $("kpis").innerHTML=[["Total de ações",n],["Previsto",c("Previsto")],["Em andamento",c("Em andamento")],["Concluído",c("Concluído")],["% concluído",pct+"%"],["Atrasadas (necessidade vencida)",L.filter(late).length],["Necessidade em 7 dias",L.filter(sem).length]]
 .map(k=>`<div class="card kpi"><b>${k[1]}</b><span>${k[0]}</span></div>`).join("");
+const atrasadas=L.filter(late), proximas=L.filter(sem), emAndamento=c("Em andamento");
+$("executiveSummary").innerHTML=`<strong>${n} ações no recorte atual.</strong> Conclusão: <strong>${pct}%</strong> (${c("Concluído")} concluídas). <strong>${atrasadas.length}</strong> ações com necessidade vencida e <strong>${proximas.length}</strong> com necessidade nos próximos 7 dias. Em andamento: <strong>${emAndamento}</strong>. ${atrasadas.length?"Prioridade: tratar as ações vencidas e revisar seus responsáveis e prazos.":"Nenhuma necessidade vencida no recorte selecionado."}`;
+const currentPhoto=$("photoAction").value;
+$("photoAction").innerHTML='<option value="">Selecione uma ação</option>'+D.map(x=>`<option value="${escapeHTML(x.id)}">#${escapeHTML(x.id)} — ${escapeHTML(x.a)}</option>`).join("");
+if(D.some(x=>String(x.id)===currentPhoto))$("photoAction").value=currentPhoto;
 let off=0;$("donut").innerHTML=`<circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--bd)" stroke-width="6"/>`+ST.map(s=>{const p=n?c(s)/n*100:0;const e=`<circle cx="21" cy="21" r="15.9" fill="none" stroke="${COL[s]}" stroke-width="6" stroke-dasharray="${p} ${100-p}" stroke-dashoffset="${25-off}" style="cursor:pointer" onclick="setF('s','${s}','fs')"/>`;off+=p;return e}).join("");
 $("leg").innerHTML=ST.map(s=>`<div><span class="dot" style="background:${COL[s]}"></span>${s}: <b>${c(s)}</b></div>`).join("");
 const bars=(id,k,fk,fid)=>{const base=D.filter(x=>match({...x,[k]:F[fk]||x[k]}));const keys=uniq(k);const mx=Math.max(1,...keys.map(v=>base.filter(x=>x[k]===v).length));
@@ -223,9 +235,60 @@ $("regSubmit").onclick=registerUser;
 $("fiscalSave").onclick=addFiscal;
 $("fiscalRefresh").onclick=loadFiscais;
 document.getElementById("sbLogin").onclick=login;document.getElementById("sbLogout").onclick=logout;document.getElementById("sbReload").onclick=reload;draw();
+
+let photoObjectURLs=[];
+function clearPhotoURLs(){photoObjectURLs.forEach(URL.revokeObjectURL);photoObjectURLs=[]}
+function photoInfo(message,error=false){const el=$("photoInfo");el.textContent=message;el.style.color=error?"#b91c1c":"#087f5b"}
+async function storageRequest(path,opts={}){
+ const r=await fetch(SB_URL+"/storage/v1"+path,{...opts,headers:{...apiHeaders(),...(opts.headers||{})}});
+ if(!r.ok)throw Error("Storage HTTP "+r.status+": "+(await r.text()).slice(0,250));
+ return r;
+}
+async function uploadPhoto(){
+ const id=$("photoAction").value, file=$("photoFile").files[0], desc=$("photoDesc").value.trim();
+ if(!id||!D.some(x=>String(x.id)===id)){photoInfo("Selecione uma ação cadastrada.",true);return}
+ if(!file){photoInfo("Selecione uma fotografia.",true);return}
+ if(!["image/jpeg","image/png","image/webp"].includes(file.type)||file.size>5*1024*1024){photoInfo("Use JPG, PNG ou WebP de até 5 MB.",true);return}
+ const ext={"image/jpeg":"jpg","image/png":"png","image/webp":"webp"}[file.type];
+ const path=id+"/"+crypto.randomUUID()+"."+ext;
+ try{
+  $("photoUpload").disabled=true;photoInfo("Enviando fotografia...");
+  await storageRequest("/object/evidencias-acoes/"+path,{method:"POST",headers:{"Content-Type":file.type,"x-upsert":"false"},body:file});
+  try{
+   await sbFetch("/rest/v1/fotos_acoes",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify({acao_id:Number(id),arquivo:path,descricao:desc})});
+  }catch(e){photoInfo("Imagem enviada, mas o vínculo falhou. Avise o responsável pelo sistema: "+e.message,true);return}
+  $("photoFile").value="";$("photoDesc").value="";await loadPhotos();
+ }catch(e){photoInfo("Não foi possível enviar: "+e.message,true)}
+ finally{$("photoUpload").disabled=false}
+}
+async function loadPhotos(){
+ const id=$("photoAction").value;clearPhotoURLs();$("photoGallery").replaceChildren();
+ if(!id){photoInfo("Selecione uma ação para consultar suas fotografias.");return}
+ try{
+  const fotos=await sbFetch("/rest/v1/fotos_acoes?select=id,arquivo,descricao,criado_em&acao_id=eq."+encodeURIComponent(id)+"&order=criado_em.desc");
+  for(const f of fotos||[]){
+   const r=await storageRequest("/object/authenticated/evidencias-acoes/"+f.arquivo);
+   const url=URL.createObjectURL(await r.blob());photoObjectURLs.push(url);
+   const card=document.createElement("div");card.className="card";
+   const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";
+   const img=document.createElement("img");img.src=url;img.alt=f.descricao||"Evidência fotográfica";img.style.cssText="width:100%;height:150px;object-fit:cover;border-radius:8px";a.append(img);
+   const p=document.createElement("p");p.textContent=f.descricao||"Sem descrição";
+   const small=document.createElement("small");small.textContent=new Date(f.criado_em).toLocaleString("pt-BR");
+   card.append(a,p,small);$("photoGallery").append(card);
+  }
+  photoInfo((fotos||[]).length+" fotografia(s) vinculada(s) à ação.");
+ }catch(e){photoInfo("Não foi possível carregar fotografias: "+e.message,true)}
+}
+$("photoUpload").onclick=uploadPhoto;
+$("photoRefresh").onclick=loadPhotos;
+$("photoAction").onchange=loadPhotos;
 $("btnNew").onclick=()=>openModal(-1);
 $("btnExport").onclick=exportCSV;
 $("mCancel").onclick=closeModal;
+$("mSave").onclick=saveModal;
+$("modalBg").onclick=e=>{if(e.target.id==="modalBg")closeModal();};
+</script></body></html>
+
 $("mSave").onclick=saveModal;
 $("modalBg").onclick=e=>{if(e.target.id==="modalBg")closeModal();};
 </script></body></html>
