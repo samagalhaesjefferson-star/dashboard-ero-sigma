@@ -59,6 +59,23 @@ td select{padding:3px 6px;font-size:12px}
 <div class="filters"><input id="fiscalNome" placeholder="Nome completo do fiscal" maxlength="120"><input id="fiscalEmail" type="email" placeholder="E-mail (opcional)" maxlength="254"><input id="fiscalDisc" placeholder="Disciplina (opcional)" maxlength="100"><input id="fiscalEmpresa" placeholder="Empresa (opcional)" maxlength="100"><button class="btn-add" id="fiscalSave">Adicionar fiscal</button><button class="btn-add" id="fiscalRefresh" style="background:var(--pl)">Atualizar fiscais</button></div>
 <p id="fiscalInfo" role="status"></p><div class="tw"><table style="min-width:600px"><thead><tr><th>Nome</th><th>E-mail</th><th>Disciplina</th><th>Empresa</th><th>Situação</th></tr></thead><tbody id="fiscalRows"></tbody></table></div>
 </div><div class="card" id="adminCancelPanel" style="display:none;margin-bottom:14px"><h3>Administração · Cancelamento de atividades</h3><p>Somente o administrador pode cancelar. O registro é preservado com justificativa, data e responsável.</p><div class="filters"><select id="cancelAction" style="flex:2;min-width:260px"><option value="">Selecione uma atividade ativa</option></select><input id="cancelReason" placeholder="Justificativa obrigatória (mínimo 10 caracteres)" maxlength="1000" style="flex:3"><button class="btn-add" id="cancelSubmit" style="background:#9f3131">Cancelar atividade</button></div><p id="cancelInfo" role="status"></p></div><div class="kpis" id="kpis"></div>
+
+<div class="card" id="equipmentPanel" style="margin-bottom:14px">
+  <h3>Programação de equipamentos · Munck e Guindaste</h3>
+  <p>Registre a solicitação com TAG e período. A reserva só fica aprovada após decisão do administrador.</p>
+  <div class="filters">
+    <select id="eqType" aria-label="Tipo de equipamento"><option>Munck</option><option>Guindaste</option></select>
+    <input id="eqTag" maxlength="120" placeholder="TAG / identificação do equipamento">
+    <label style="display:flex;align-items:center;gap:6px">Início <input id="eqStart" type="datetime-local" aria-label="Início da reserva"></label>
+    <label style="display:flex;align-items:center;gap:6px">Término <input id="eqEnd" type="datetime-local" aria-label="Término da reserva"></label>
+    <input id="eqNotes" maxlength="1000" placeholder="Observações (opcional)">
+    <button class="btn-add" id="eqSubmit">Solicitar equipamento</button>
+    <button class="btn-add" id="eqRefresh" style="background:var(--pl)">Atualizar solicitações</button>
+  </div>
+  <p id="eqInfo" role="status"></p>
+  <div class="tw"><table style="min-width:900px"><thead><tr><th>Tipo</th><th>TAG</th><th>Início</th><th>Término</th><th>Observações</th><th>Status</th><th id="eqDecisionHead">Decisão</th></tr></thead><tbody id="eqRows"></tbody></table></div>
+</div>
+
 <div class="card" style="margin-bottom:14px"><h3>Resumo gerencial · ações filtradas</h3><div id="executiveSummary" style="line-height:1.8"></div></div>
 <div class="grid">
 <div class="card"><h3>Status</h3><div class="donut"><svg id="donut" width="130" height="130" viewBox="0 0 42 42"></svg><div class="leg" id="leg"></div></div></div>
@@ -122,7 +139,7 @@ function save(){} // dados persistidos diretamente no Supabase
 function delRow(ix){alert("Exclusão desabilitada: ainda não configuramos uma política segura para excluir ações.")}
 async function reload(){try{const records=await sbFetch('/rest/v1/acoes?select=*&order=id.asc');if(records.length)detectColumns(records[0]);D.splice(0,D.length,...records.map(fromDB));sel("fd","d","Disciplina",uniq("d"));sel("fr","r","Responsável",uniq("r"));sel("fa","a","Ação",uniq("c").filter(Boolean));draw();setInfo("Sincronizado: "+D.length+" ações",false)}catch(e){setInfo("Erro ao carregar ações: "+e.message,true)}}
 function setInfo(message,error){const e=document.getElementById("syncInfo");e.textContent=message;e.style.color=error?"#b91c1c":"#087f5b"}
-async function login(){const email=document.getElementById("sbEmail").value.trim(),password=document.getElementById("sbPassword").value;if(!email||!password)return setInfo("Informe e-mail e senha.",true);try{const r=await fetch(SB_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:SB_KEY,'Content-Type':'application/json'},body:JSON.stringify({email,password})});const result=await r.json();if(!r.ok){const detail=result.msg||result.error_description||result.message||'Falha no login';if(r.status===400&&/invalid login credentials/i.test(detail))throw Error("E-mail ou senha não reconhecidos. Confira o cadastro em Supabase → Authentication → Users e redefina a senha se necessário.");if(/email not confirmed/i.test(detail))throw Error("E-mail ainda não confirmado no Supabase. Confirme o usuário em Authentication → Users.");throw Error(detail);}accessToken=result.access_token;refreshToken=result.refresh_token;document.getElementById('sbPassword').value='';document.getElementById('loginPanel').style.display='none';document.getElementById('dashboardContent').style.display='block';await reload();await loadFiscais();await checkAdmin();}catch(e){setInfo("Falha no login: "+e.message,true)}}
+async function login(){const email=document.getElementById("sbEmail").value.trim(),password=document.getElementById("sbPassword").value;if(!email||!password)return setInfo("Informe e-mail e senha.",true);try{const r=await fetch(SB_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:SB_KEY,'Content-Type':'application/json'},body:JSON.stringify({email,password})});const result=await r.json();if(!r.ok){const detail=result.msg||result.error_description||result.message||'Falha no login';if(r.status===400&&/invalid login credentials/i.test(detail))throw Error("E-mail ou senha não reconhecidos. Confira o cadastro em Supabase → Authentication → Users e redefina a senha se necessário.");if(/email not confirmed/i.test(detail))throw Error("E-mail ainda não confirmado no Supabase. Confirme o usuário em Authentication → Users.");throw Error(detail);}accessToken=result.access_token;refreshToken=result.refresh_token;document.getElementById('sbPassword').value='';document.getElementById('loginPanel').style.display='none';document.getElementById('dashboardContent').style.display='block';await reload();await loadFiscais();await checkAdmin();await loadEquipment();}catch(e){setInfo("Falha no login: "+e.message,true)}}
 function logout(){isAdmin=false;$("adminCancelPanel").style.display="none";accessToken='';refreshToken='';D.length=0;fiscais=[];document.getElementById('loginPanel').style.display='block';document.getElementById('dashboardContent').style.display='none';setInfo('Sessão encerrada.',false)}
 async function insertRecord(record){await sbFetch('/rest/v1/acoes',{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify(toDB(record))});await reload()}
 async function updateRecord(ix,record){if(D[ix].cancelado)throw Error("Ação cancelada: edição bloqueada.");const id=D[ix].id;await sbFetch('/rest/v1/acoes?id=eq.'+encodeURIComponent(id),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify(toDB(record))});await reload()}
@@ -257,6 +274,85 @@ $("regSubmit").onclick=registerUser;
 $("fiscalSave").onclick=addFiscal;
 $("fiscalRefresh").onclick=loadFiscais;
 document.getElementById("sbLogin").onclick=login;document.getElementById("sbLogout").onclick=logout;document.getElementById("sbReload").onclick=reload;draw();
+
+
+// Módulo V7: solicitações e decisões de Munck/Guindaste
+function equipmentMessage(message, error=false) {
+  const el = $("eqInfo");
+  el.textContent = message;
+  el.style.color = error ? "#b91c1c" : "#087f5b";
+}
+function dateForDisplay(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? value : d.toLocaleString("pt-BR");
+}
+async function loadEquipment() {
+  try {
+    const rows = await sbFetch("/rest/v1/solicitacoes_equipamentos?select=id,tipo,tag,inicio,termino,observacoes,status,solicitado_por,criado_em&order=inicio.asc");
+    const data = Array.isArray(rows) ? rows : [];
+    $("eqRows").innerHTML = data.map(x => {
+      const decision = isAdmin && x.status === "Pendente"
+        ? `<button class="btn-add" data-eq-approve="${x.id}">Aprovar</button> <button class="btn-add" style="background:#b91c1c" data-eq-reject="${x.id}">Recusar</button>`
+        : "—";
+      return `<tr><td>${escapeHTML(x.tipo)}</td><td>${escapeHTML(x.tag)}</td><td>${escapeHTML(dateForDisplay(x.inicio))}</td><td>${escapeHTML(dateForDisplay(x.termino))}</td><td>${escapeHTML(x.observacoes || "")}</td><td>${escapeHTML(x.status)}</td><td>${decision}</td></tr>`;
+    }).join("") || '<tr><td colspan="7">Nenhuma solicitação encontrada para este acesso.</td></tr>';
+    $("eqRows").querySelectorAll("[data-eq-approve]").forEach(b => b.addEventListener("click", () => decideEquipment(Number(b.dataset.eqApprove), "Aprovado")));
+    $("eqRows").querySelectorAll("[data-eq-reject]").forEach(b => b.addEventListener("click", () => decideEquipment(Number(b.dataset.eqReject), "Recusado")));
+    $("eqDecisionHead").textContent = isAdmin ? "Decisão administrativa" : "Ação";
+    equipmentMessage(`${data.length} solicitação(ões) carregada(s).`);
+  } catch (e) {
+    $("eqRows").innerHTML = '<tr><td colspan="7">Não foi possível carregar as solicitações.</td></tr>';
+    equipmentMessage("Falha ao carregar equipamentos: " + e.message + ". Confirme se o SQL V7 foi executado no projeto Supabase correto.", true);
+  }
+}
+async function submitEquipment() {
+  const tipo = $("eqType").value;
+  const tag = $("eqTag").value.trim();
+  const inicioValue = $("eqStart").value;
+  const terminoValue = $("eqEnd").value;
+  const observacoes = $("eqNotes").value.trim();
+  if (!tag || !inicioValue || !terminoValue) {
+    equipmentMessage("Preencha TAG, início e término.", true); return;
+  }
+  const inicio = new Date(inicioValue), termino = new Date(terminoValue);
+  if (Number.isNaN(inicio.getTime()) || Number.isNaN(termino.getTime()) || termino <= inicio) {
+    equipmentMessage("O término precisa ser posterior ao início.", true); return;
+  }
+  try {
+    $("eqSubmit").disabled = true;
+    await sbFetch("/rest/v1/solicitacoes_equipamentos", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({tipo, tag, inicio: inicio.toISOString(), termino: termino.toISOString(), observacoes, status: "Pendente"})
+    });
+    $("eqTag").value = ""; $("eqStart").value = ""; $("eqEnd").value = ""; $("eqNotes").value = "";
+    await loadEquipment();
+    equipmentMessage("Solicitação registrada como Pendente. Aguarde a decisão do administrador.");
+  } catch (e) {
+    equipmentMessage("Não foi possível registrar: " + e.message, true);
+  } finally {
+    $("eqSubmit").disabled = false;
+  }
+}
+async function decideEquipment(id, status) {
+  const acao = status === "Aprovado" ? "aprovar" : "recusar";
+  if (!isAdmin) { equipmentMessage("Somente administrador pode decidir solicitações.", true); return; }
+  if (!confirm(`Confirma ${acao} a solicitação #${id}?`)) return;
+  try {
+    await sbFetch("/rest/v1/rpc/ero_decidir_equipamento", {
+      method: "POST",
+      body: JSON.stringify({p_id: id, p_status: status})
+    });
+    await loadEquipment();
+    equipmentMessage(`Solicitação #${id}: ${status.toLowerCase()}.`);
+  } catch (e) {
+    equipmentMessage("Falha ao decidir: " + e.message + ". Se a TAG já estiver reservada no período, escolha outro intervalo.", true);
+    await loadEquipment();
+  }
+}
+$("eqSubmit").onclick = submitEquipment;
+$("eqRefresh").onclick = loadEquipment;
 
 let photoObjectURLs=[];
 function clearPhotoURLs(){photoObjectURLs.forEach(URL.revokeObjectURL);photoObjectURLs=[]}
